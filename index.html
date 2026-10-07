@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Insurance Fund — Extended Monte Carlo (JS + D3)</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0e13;
+    --panel: #151a22;
+    --muted: #a3adbd;
+    --text: #e8eef9;
+    --accent: #f7b267;   /* insured */
+    --baseline: #9aa3af; /* baseline */
+    --grid: #2a3240;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
+  header { padding: 24px clamp(16px, 4vw, 48px) 8px; }
+  h1 { margin: 0 0 4px; font-size: clamp(20px, 2.2vw, 30px); font-weight: 800; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 13px; line-height: 1.4; }
+  main { display: grid; gap: 16px; grid-template-columns: minmax(260px, 380px) 1fr; padding: 8px clamp(16px,4vw,48px) 32px; }
+  .card { background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border: 1px solid #202733; border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  .controls h2, .viz h2 { margin: 0 0 12px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); }
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+  input[type="number"]{ width: 100%; background: #10151d; color: var(--text); border: 1px solid #243144; border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+  .full { grid-column: 1 / -1; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { appearance: none; border: none; cursor: pointer; background: linear-gradient(180deg, #2b3a52, #1f2a3a); border: 1px solid #3b4b63; color: #fff; font-weight: 700; padding: 12px 14px; border-radius: 12px; font-size: 14px; transition: transform .04s ease, box-shadow .2s ease; }
+  button:active { transform: translateY(1px); }
+  .hint { font-size: 12px; color: var(--muted); }
+  .legend { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
+  .legend .key { width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 6px; }
+  .key.ins { background: var(--accent); opacity: .8; }
+  .key.base { background: var(--baseline); opacity: .8; }
+  .grid line { stroke: var(--grid); stroke-opacity: 0.6; shape-rendering: crispEdges; }
+  .axis path, .axis line { stroke: var(--grid); }
+  .axis text { fill: var(--muted); font-size: 12px; }
+  svg { width: 100%; height: 430px; }
+  .bars .bar { shape-rendering: crispEdges; }
+  .plot { margin-top: 12px; }
+  .titleBlock { margin-bottom: 8px; }
+  .titleBlock .label { white-space: pre-line; font-size: 13px; color: var(--muted); }
+  .stats { font-size: 13px; color: var(--muted); display: grid; gap: 6px; margin-top: 8px; text-align: center; }
+  .badge { font-size: 11px; background: #182130; border: 1px solid #26344a; color: var(--muted); padding: 2px 8px; border-radius: 999px; }
+  .grid2 { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 980px){ .grid2 { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Insurance Fund — Extended Monte Carlo</h1>
+    <div class="sub">Six-panel dashboard: MDD CDFs, percentile drawdowns, and distributions of annualized μ, σ, Sharpe, and drawdown-risk R<sub>0</sub>. Overlays compare baseline vs. insured.</div>
+  </header>
+
+  <main>
+    <section class="card controls">
+      <h2>Parameters</h2>
+      <form id="controls">
+        <div>
+          <label>Sharpe Ratio (S)</label>
+          <input type="number" step="0.1" id="daS" value="2">
+        </div>
+        <div>
+          <label>Drawdown Risk (R)</label>
+          <input type="number" step="0.01" id="daR" value="0.02">
+        </div>
+        <div>
+          <label>Ticks per Year</label>
+          <input type="number" step="1" id="tpy" value="365">
+        </div>
+        <div>
+          <label>Years</label>
+          <input type="number" step="1" id="years" value="3">
+        </div>
+        <div>
+          <label>Sample Size</label>
+          <input type="number" step="100" id="samplesize" value="10000">
+        </div>
+        <div>
+          <label>P-Confidence (0–1)</label>
+          <input type="number" step="0.01" id="pConf" value="0.95">
+        </div>
+        <div>
+          <label>Fund Start Share</label>
+          <input type="number" step="0.01" id="fundStart" value="0.10">
+        </div>
+        <div>
+          <label>Fund Target Share</label>
+          <input type="number" step="0.01" id="fundTarget" value="0.10">
+        </div>
+        <div>
+          <label>Inflow Growth (annual)</label>
+          <input type="number" step="0.1" id="inflowGrowth" value="4">
+        </div>
+        <div>
+          <label>Min Return (annual)</label>
+          <input type="number" step="0.005" id="minReturn" value="0.03">
+        </div>
+        <div>
+          <label>Mgmt Fee (annual)</label>
+          <input type="number" step="0.005" id="mgmtFee" value="0.02">
+        </div>
+        <div>
+          <label>Perf Fee (rate)</label>
+          <input type="number" step="0.01" id="perfFee" value="0.16">
+        </div>
+        <div class="full"><hr style="border:0;border-top:1px solid #283243"></div>
+        <div>
+          <label>Bin (MDD & P-Drawdown)</label>
+          <input type="number" step="0.001" id="binMdd" value="0.005">
+        </div>
+        <div>
+          <label>Bin (μ PDF)</label>
+          <input type="number" step="0.001" id="binMu" value="0.01">
+        </div>
+        <div>
+          <label>Bin (σ PDF)</label>
+          <input type="number" step="0.0005" id="binSigma" value="0.001">
+        </div>
+        <div>
+          <label>Bin (Sharpe PDF)</label>
+          <input type="number" step="0.05" id="binSharpe" value="0.2">
+        </div>
+        <div>
+          <label>Bin (R₀ PDF)</label>
+          <input type="number" step="0.0005" id="binRisk" value="0.001">
+        </div>
+        <div class="full row">
+          <button id="run">Run simulation</button>
+          <span id="status" class="hint badge">ready</span>
+        </div>
+      </form>
+      <div class="hint" style="margin-top:10px">Tip: 10k paths × (years×ticks) can be heavy in-browser. If it lags, lower the sample size while exploring.</div>
+    </section>
+
+    <section class="card viz">
+      <h2>Results</h2>
+      <div class="legend"><span class="key base"></span><span>Baseline</span><span class="key ins" style="margin-left:16px"></span><span>Insured</span></div>
+      <div class="titleBlock"><div id="plotTitle" class="label"></div></div>
+      <div class="grid2">
+        <div class="plot">
+          <svg id="chart1" viewBox="0 0 900 430"></svg>
+          <div class="stats" id="stats1"></div>
+        </div>
+        <div class="plot">
+          <svg id="chart2" viewBox="0 0 900 430"></svg>
+          <div class="stats" id="stats2"></div>
+        </div>
+        <div class="plot">
+          <svg id="chart3" viewBox="0 0 900 430"></svg>
+          <div class="stats" id="stats3"></div>
+        </div>
+        <div class="plot">
+          <svg id="chart4" viewBox="0 0 900 430"></svg>
+          <div class="stats" id="stats4"></div>
+        </div>
+        <div class="plot">
+          <svg id="chart5" viewBox="0 0 900 430"></svg>
+          <div class="stats" id="stats5"></div>
+        </div>
+        <div class="plot">
+          <svg id="chart6" viewBox="0 0 900 430"></svg>
+          <div class="stats" id="stats6"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+/* ----------------------- Utilities ----------------------- */
+function randn(){ let u=0,v=0; while(u===0) u=Math.random(); while(v===0) v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function normal(mu, sigma){ return mu + sigma * randn(); }
+function mean(a){ return a.reduce((x,y)=>x+y,0) / a.length; }
+function stddev(a){ const m=mean(a); let v=0; for(let i=0;i<a.length;i++){ const d=a[i]-m; v+=d*d; } return Math.sqrt(v / (a.length-1)); }
+function clamp(x, lo, hi){ return Math.max(lo, Math.min(hi, x)); }
+function fmt(x, p=6){ const s = (Math.abs(x) < 1e-12 ? 0 : x); return s.toFixed(p); }
+function sleep(ms) {    return new Promise(resolve => setTimeout(resolve, ms));}
+
+/* ------------- Drawdown helpers (log returns) ------------ */
+function underwaterSeriesFromLogReturns(lr){
+  const out = new Array(lr.length);
+  let cum = 0, peak = 0;
+  for(let i=0;i<lr.length;i++){
+    cum += lr[i];
+    if(cum>peak) peak = cum;
+    out[i] = cum - peak; // <= 0
+  }
+  return out; // array of underwater (log)
+}
+
+/* ---------------- Insurance logic JS --------------------- */
+function insureLogReturn(lr, options={}){
+  const defaults = {
+    targetInsuranceFundShare: 0.10,
+    startInsuranceFundShare: 0.10,
+    startAUM: 100,
+    startHWM: 100,
+    startNAV: 100,
+    targetMinReturn: 0.06,
+    inflowGrowth: 0.0,
+    ticksPerYear: 365,
+    managementFee: 0.0,
+    performanceFee: 0.0
+  };
+  const o = Object.assign({}, defaults, options);
+  let AUM = o.startAUM;
+  let AUMToNav = AUM;
+  let HWM = o.startHWM;
+  let NAV = o.startNAV;
+  let InsuranceFund = o.startInsuranceFundShare * AUM;
+  const targetShare = o.targetInsuranceFundShare;
+  const ifTake = targetShare / (1 + targetShare);
+  const inflowGrowth = Math.log(1 + o.inflowGrowth) / o.ticksPerYear;
+  const minGrowth   = Math.log(1 + o.targetMinReturn) / o.ticksPerYear;
+  const mgmtLog     = Math.log(1 - o.managementFee) / o.ticksPerYear;
+  const perfFee     = o.performanceFee;
+  const out = new Array(lr.length);
+
+  for(let i=0;i<lr.length;i++){
+    const lastNAV = NAV; const lastAUM = AUM;
+    const pTake = (InsuranceFund < targetShare*AUM) ? 1 : ifTake;
+    AUM *= Math.exp(lr[i]);
+    const managementFeeTake = (1 - Math.exp(mgmtLog)) * AUM; AUM -= managementFeeTake;
+    let insuranceFundTake = 0; const targetAUM = lastAUM*Math.exp(minGrowth);
+    if(AUM > targetAUM){
+      insuranceFundTake = pTake*(AUM - targetAUM);
+      InsuranceFund += insuranceFundTake; AUM -= insuranceFundTake;
+    } else {
+      const need = targetAUM - AUM; insuranceFundTake = Math.min(InsuranceFund, need);
+      InsuranceFund -= insuranceFundTake; AUM += insuranceFundTake;
+    }
+    NAV = o.startNAV * AUM / AUMToNav;
+    let performanceFeeTake = 0;
+    if(NAV > HWM){
+      performanceFeeTake = perfFee * (NAV/HWM - 1) * AUM;
+      AUM -= performanceFeeTake; NAV = o.startNAV * AUM / AUMToNav; HWM = NAV;
+    }
+    AUM *= Math.exp(inflowGrowth); AUMToNav *= Math.exp(inflowGrowth);
+    const newlr = Math.log(NAV / lastNAV);
+    out[i] = { NAV, HWM, AUM, InsuranceFund, managementFeeTake, performanceFeeTake, newlr };
+  }
+  return out;
+}
+
+/* ---------------- Monte Carlo (extended) ----------------- */
+function simulate(p, onStatus){
+  const T = Math.floor(p.tpy * p.years);
+  const mu = (2 * p.daR / ((1 + p.daR)**2)) * (p.daS**2) / p.tpy;
+  const sigma = (2 * p.daR / (1 + p.daR)) * p.daS / Math.sqrt(p.tpy);
+
+  const mddOrig=[], mddIns=[], muOrig=[], muIns=[], sdOrig=[], sdIns=[], shOrig=[], shIns=[], rOrig=[], rIns=[], ddConfOrig=[], ddConfIns=[];
+
+  for(let s=0; s<p.samplesize; s++){
+    if(s % Math.max(1, Math.floor(p.samplesize/25)) === 0 && onStatus){ onStatus(`simulating… ${Math.round((s/p.samplesize)*100)}%`); }
+
+    const lr = new Array(T); for(let i=0;i<T;i++){ lr[i] = normal(mu, sigma); }
+
+    // baseline stats
+    const ddSeries = underwaterSeriesFromLogReturns(lr);
+    const mdd = Math.min(...ddSeries);
+    const m = p.tpy * mean(lr);
+    const sd = Math.sqrt(p.tpy) * stddev(lr);
+    const sh = m / sd + 0.5 * sd; // as in WL code
+    const r0 = 0.5 * sd * sd / m;
+
+    // insured
+    const ins = insureLogReturn(lr, {
+      ticksPerYear: p.tpy,
+      startInsuranceFundShare: p.fundStart,
+      targetInsuranceFundShare: p.fundTarget,
+      inflowGrowth: p.inflowGrowth,
+      targetMinReturn: p.minReturn,
+      managementFee: p.mgmtFee,
+      performanceFee: p.perfFee
+    });
+    const lrIns = ins.map(d=>d.newlr);
+    const ddSeriesI = underwaterSeriesFromLogReturns(lrIns);
+    const mddI = Math.min(...ddSeriesI);
+    const mI = p.tpy * mean(lrIns);
+    const sdI = Math.sqrt(p.tpy) * stddev(lrIns);
+    const shI = clamp(mI / sdI + 0.5 * sdI, -100, 100);
+    const r0I = 0.5 * sdI * sdI / mI;
+
+    // percentile drawdown
+    const sortedDD  = ddSeries.slice().sort((a,b)=>b-a);
+    const sortedDDI = ddSeriesI.slice().sort((a,b)=>b-a);
+    const n = lr.length; const idx = Math.max(0, Math.min(n-1, Math.round(p.pConf * n) - 1));
+    const ddP  = sortedDD[idx];
+    const ddPI = sortedDDI[idx];
+
+    mddOrig.push(mdd); mddIns.push(mddI);
+    muOrig.push(m); muIns.push(mI);
+    sdOrig.push(sd); sdIns.push(sdI);
+    shOrig.push(sh); shIns.push(shI);
+    rOrig.push(r0); rIns.push(r0I);
+    ddConfOrig.push(ddP); ddConfIns.push(ddPI);
+  }
+
+  if(onStatus) onStatus('done');
+  return { mddOrig, mddIns, muOrig, muIns, sdOrig, sdIns, shOrig, shIns, rOrig, rIns, ddConfOrig, ddConfIns };
+}
+
+/* --------------------- D3 charting ----------------------- */
+function setupFrame(svg){
+  const width = svg.viewBox.baseVal.width || svg.clientWidth; const height = svg.viewBox.baseVal.height || 430;
+  const margin = {top: 10, right: 20, bottom: 40, left: 56};
+  const innerW = width - margin.left - margin.right; const innerH = height - margin.top - margin.bottom;
+  svg.innerHTML = ""; const g = d3.select(svg).append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  return {g, innerW, innerH, margin};
+}
+
+function cdfFromData(data, binWidth, domain){
+  const [minV, maxV] = domain || [d3.min(data), d3.max(data)];
+  const thresholds = d3.range(Math.floor(minV/binWidth)*binWidth, maxV + 1e-9, binWidth);
+  const bins = d3.bin().domain([minV, maxV]).thresholds(thresholds)(data);
+  let acc = 0; const n = data.length;
+  return bins.map(b=>{ acc += b.length; return { x0:b.x0, x1:b.x1, y: acc/n }; });
+}
+
+function renderCDF(svg, base, ins, binWidth, labelX){
+  const {g, innerW, innerH} = setupFrame(svg);
+  const minVal = Math.min(d3.min(base), d3.min(ins));
+  const maxVal = Math.max(d3.max(base), d3.max(ins));
+  const baseCDF = cdfFromData(base, binWidth, [minVal, maxVal]);
+  const insCDF  = cdfFromData(ins,  binWidth, [minVal, maxVal]);
+  const x = d3.scaleLinear().domain([minVal, maxVal]).range([0, innerW]);
+  const y = d3.scaleLinear().domain([0,1]).range([innerH,0]);
+
+  g.append("g").attr("class","grid").attr("transform",`translate(0,${innerH})`).call(d3.axisBottom(x).ticks(10).tickSize(-innerH).tickFormat(()=>""));
+  g.append("g").attr("class","grid").call(d3.axisLeft(y).ticks(6).tickSize(-innerW).tickFormat(()=>""));
+
+  g.append("g").attr("class","bars")
+    .selectAll("rect.base").data(baseCDF).join("rect")
+    .attr("class","bar base").attr("x",d=>x(d.x0)).attr("y",d=>y(d.y))
+    .attr("width",d=>Math.max(0.5, x(d.x1)-x(d.x0)-1)).attr("height",d=>innerH-y(d.y))
+    .attr("fill","var(--baseline)").attr("opacity",0.9);
+
+  g.append("g").attr("class","bars")
+    .selectAll("rect.ins").data(insCDF).join("rect")
+    .attr("class","bar ins").attr("x",d=>x(d.x0)+0.5).attr("y",d=>y(d.y))
+    .attr("width",d=>Math.max(0.5, x(d.x1)-x(d.x0)-1)).attr("height",d=>innerH-y(d.y))
+    .attr("fill","var(--accent)").attr("opacity",0.7);
+
+  g.append("g").attr("class","axis").attr("transform",`translate(0,${innerH})`).call(d3.axisBottom(x).ticks(10).tickFormat(d3.format(".3f")));
+  g.append("g").attr("class","axis").call(d3.axisLeft(y).ticks(6).tickFormat(d3.format(".0%")));
+
+  g.append("text").attr("x", innerW/2).attr("y", innerH+34).attr("fill","var(--muted)").attr("text-anchor","middle").style("font-size","12px").text(labelX||"Value");
+  g.append("text").attr("transform","rotate(-90)").attr("x",-innerH/2).attr("y",-44).attr("fill","var(--muted)").attr("text-anchor","middle").style("font-size","12px").text("CDF");
+}
+
+function renderPDF(svg, base, ins, binWidth, labelX,minVal=null,maxVal=null){
+  const {g, innerW, innerH} = setupFrame(svg);
+  if (!minVal) minVal = Math.min(d3.min(base), d3.min(ins));
+  if (!maxVal) maxVal = Math.max(d3.max(base), d3.max(ins));
+  const thresholds = d3.range(Math.floor(minVal/binWidth)*binWidth, maxVal + 1e-9, binWidth);
+  const bin = d3.bin().domain([minVal, maxVal]).thresholds(thresholds);
+  const bA = bin(base), bB = bin(ins);
+  const nA = base.length, nB = ins.length;
+  const densA = bA.map(b=>({x0:b.x0,x1:b.x1,y:b.length/(nA*binWidth)}));
+  const densB = bB.map(b=>({x0:b.x0,x1:b.x1,y:b.length/(nB*binWidth)}));
+  const maxY = Math.max(d3.max(densA,d=>d.y), d3.max(densB,d=>d.y)) * 1.05;
+  const x = d3.scaleLinear().domain([minVal, maxVal]).range([0, innerW]);
+  const y = d3.scaleLinear().domain([0, maxY]).range([innerH, 0]);
+
+  g.append("g").attr("class","grid").attr("transform",`translate(0,${innerH})`).call(d3.axisBottom(x).ticks(10).tickSize(-innerH).tickFormat(()=>""));
+  g.append("g").attr("class","grid").call(d3.axisLeft(y).ticks(6).tickSize(-innerW).tickFormat(()=>""));
+
+  g.selectAll("rect.base").data(densA).join("rect").attr("class","bar base")
+    .attr("x",d=>x(d.x0)).attr("y",d=>y(d.y))
+    .attr("width",d=>Math.max(0.5, x(d.x1)-x(d.x0)-1)).attr("height",d=>innerH - y(d.y))
+    .attr("fill","var(--baseline)").attr("opacity",0.9);
+
+  g.selectAll("rect.ins").data(densB).join("rect").attr("class","bar ins")
+    .attr("x",d=>x(d.x0)+0.5).attr("y",d=>y(d.y))
+    .attr("width",d=>Math.max(0.5, x(d.x1)-x(d.x0)-1)).attr("height",d=>innerH - y(d.y))
+    .attr("fill","var(--accent)").attr("opacity",0.7);
+
+  g.append("g").attr("class","axis").attr("transform",`translate(0,${innerH})`).call(d3.axisBottom(x).ticks(10).tickFormat(d3.format(".3f")));
+  g.append("g").attr("class","axis").call(d3.axisLeft(y).ticks(6));
+
+  g.append("text").attr("x", innerW/2).attr("y", innerH+34).attr("fill","var(--muted)").attr("text-anchor","middle").style("font-size","12px").text(labelX||"Value");
+  g.append("text").attr("transform","rotate(-90)").attr("x",-innerH/2).attr("y",-44).attr("fill","var(--muted)").attr("text-anchor","middle").style("font-size","12px").text("PDF");
+}
+
+/* -------------------- Orchestration ---------------------- */
+const els = {
+  title: document.getElementById('plotTitle'),
+  status: document.getElementById('status'),
+  charts: [
+    document.getElementById('chart1'), document.getElementById('chart2'),
+    document.getElementById('chart3'), document.getElementById('chart4'),
+    document.getElementById('chart5'), document.getElementById('chart6')
+  ],
+  stats: [
+    document.getElementById('stats1'), document.getElementById('stats2'),
+    document.getElementById('stats3'), document.getElementById('stats4'),
+    document.getElementById('stats5'), document.getElementById('stats6')
+  ]
+};
+
+function readParams(){
+  return {
+    daS: parseFloat(document.getElementById('daS').value),
+    daR: parseFloat(document.getElementById('daR').value),
+    tpy: parseInt(document.getElementById('tpy').value, 10),
+    years: parseInt(document.getElementById('years').value, 10),
+    samplesize: parseInt(document.getElementById('samplesize').value, 10),
+    pConf: parseFloat(document.getElementById('pConf').value),
+    fundStart: parseFloat(document.getElementById('fundStart').value),
+    fundTarget: parseFloat(document.getElementById('fundTarget').value),
+    inflowGrowth: parseFloat(document.getElementById('inflowGrowth').value),
+    minReturn: parseFloat(document.getElementById('minReturn').value),
+    mgmtFee: parseFloat(document.getElementById('mgmtFee').value),
+    perfFee: parseFloat(document.getElementById('perfFee').value),
+    binMdd: parseFloat(document.getElementById('binMdd').value),
+    binMu: parseFloat(document.getElementById('binMu').value),
+    binSigma: parseFloat(document.getElementById('binSigma').value),
+    binSharpe: parseFloat(document.getElementById('binSharpe').value),
+    binRisk: parseFloat(document.getElementById('binRisk').value)
+  };
+}
+
+function setStatus(m){ els.status.textContent = m; }
+
+async function run(){
+  const p = readParams(); setStatus('simulating…');
+  await sleep(10);
+  const res = simulate(p, setStatus);
+
+  // Means akin to "allMeans"
+  const allMeans = [
+    mean(res.mddOrig), mean(res.mddIns),
+    mean(res.muOrig),  mean(res.muIns),
+    mean(res.sdOrig),  mean(res.sdIns),
+    mean(res.shOrig),  mean(res.shIns),
+    mean(res.rOrig),   mean(res.rIns),
+    mean(res.ddConfOrig), mean(res.ddConfIns)
+  ];
+
+  // Title block similar to Mathematica label
+  els.title.textContent =
+`Sharpe Ratio = ${p.daS}, Drawdown Risk = ${p.daR}
+Fund(target) = ${(p.fundTarget*100).toFixed(1)}%, Fund(start) = ${(p.fundStart*100).toFixed(1)}%, Inflow Growth = ${(p.inflowGrowth*100).toFixed(0)}%
+Min Return = ${(p.minReturn*100).toFixed(1)}%  Mgmt Fee = ${(p.mgmtFee*100).toFixed(1)}%, Perf Fee = ${(p.perfFee*100).toFixed(1)}%
+Periods per Year = ${p.tpy}, Years = ${p.years}
+Mean MDD = ${(100*allMeans[0]).toFixed(2)}%, Mean MDD Ins Fund = ${(100*allMeans[1]).toFixed(2)}%`;
+
+  // 1) MDD CDF
+  renderCDF(els.charts[0], res.mddOrig, res.mddIns, p.binMdd, 'Log MDD (peak-to-trough)');
+  els.stats[0].innerHTML = `<strong>Mean MDD</strong> baseline ${(100*allMeans[0]).toFixed(2)}% · insured ${(100*allMeans[1]).toFixed(2)}%`;
+
+  // 2) P-confidence drawdowns CDF
+  renderCDF(els.charts[1], res.ddConfOrig, res.ddConfIns, p.binMdd, `Log Drawdown at p-confidence (p = ${p.pConf})`);
+  els.stats[1].innerHTML = `<strong>P-confidence:</strong> ${(p.pConf*100).toFixed(0)}%`;
+
+  // 3) μ PDF
+  renderPDF(els.charts[2], res.muOrig, res.muIns, p.binMu, 'Annualized μ');
+  els.stats[2].innerHTML = `Avg μ (original) = ${fmt(allMeans[2])} · Avg μ (insured) = ${fmt(allMeans[3])}`;
+
+  // 4) σ PDF
+  renderPDF(els.charts[3], res.sdOrig, res.sdIns, p.binSigma, 'Annualized σ');
+  els.stats[3].innerHTML = `Avg σ (original) = ${fmt(allMeans[4])} · Avg σ (insured) = ${fmt(allMeans[5])}`;
+
+  // 5) Sharpe PDF
+  renderPDF(els.charts[4], res.shOrig, res.shIns, p.binSharpe, 'Sharpe',-2,10);
+  els.stats[4].innerHTML = `Avg Sharpe (original) = ${fmt(allMeans[6])} · Avg Sharpe (insured) = ${fmt(allMeans[7])}`;
+
+  // 6) Drawdown-risk R0 PDF
+  renderPDF(els.charts[5], res.rOrig, res.rIns, p.binRisk, 'R₀ (drawdown risk)',-0.02,0.08);
+  els.stats[5].innerHTML = `Avg R₀ (original) = ${fmt(allMeans[8])} · Avg R₀ (insured) = ${fmt(allMeans[9])}`;
+}
+
+document.getElementById('run').addEventListener('click', (e)=>{ e.preventDefault(); run(); });
+run();
+</script>
+</body>
+</html>
